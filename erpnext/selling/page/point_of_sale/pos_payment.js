@@ -306,6 +306,44 @@ erpnext.PointOfSale.Payment = class {
 		return Math.max(flt(grand_total) - paid_so_far - flt(doc.loyalty_amount), 0);
 	}
 
+	set_auto_filled_amount(mode, amount) {
+		// Flag the write as ours so the control's onchange doesn't mistake it for
+		// the cashier typing. auto_filled_modes is what lets a later mode switch
+		// reclaim this amount; anything the cashier types clears the flag.
+		this.auto_filled_modes = this.auto_filled_modes || {};
+		this.auto_filled_modes[mode] = true;
+		this.applying_auto_fill = true;
+		try {
+			this[`${mode}_control`].set_value(amount);
+		} finally {
+			this.applying_auto_fill = false;
+		}
+	}
+
+	reclaim_auto_filled_modes(excluded_mode) {
+		// Switching modes: pull back amounts this component filled in itself, so the
+		// balance follows the cashier to the mode they just picked. Amounts the
+		// cashier typed are left alone — those are a deliberate split.
+		if (!this.auto_filled_modes) return;
+		const doc = this.events.get_frm().doc;
+
+		(doc.payments || []).forEach((p) => {
+			const mode = this.sanitize_mode_of_payment(p.mode_of_payment);
+			if (mode === excluded_mode || !this.auto_filled_modes[mode]) return;
+
+			const control = this[`${mode}_control`];
+			if (!control || !flt(control.get_value())) return;
+
+			this.applying_auto_fill = true;
+			try {
+				control.set_value(0);
+			} finally {
+				this.applying_auto_fill = false;
+			}
+			delete this.auto_filled_modes[mode];
+		});
+	}
+
 	auto_set_remaining_amount() {
 		if (!this.selected_mode) return;
 
@@ -314,9 +352,12 @@ erpnext.PointOfSale.Payment = class {
 		// only untouched / zeroed modes get auto-filled — never clobber a typed amount
 		if (flt(current_value)) return;
 
+		// free up whatever was auto-filled elsewhere before working out the balance
+		this.reclaim_auto_filled_modes(mode);
+
 		const remaining_amount = this.get_remaining_amount(mode);
 		if (remaining_amount > 0) {
-			this.selected_mode.set_value(remaining_amount);
+			this.set_auto_filled_amount(mode, remaining_amount);
 		}
 	}
 
@@ -339,7 +380,7 @@ erpnext.PointOfSale.Payment = class {
 				const control = this[`${mode}_control`];
 				if (!control || flt(control.get_value())) return;
 
-				control.set_value(remaining_amount);
+				this.set_auto_filled_amount(mode, remaining_amount);
 			});
 		} finally {
 			this.syncing_remaining_amount = false;
@@ -444,6 +485,9 @@ erpnext.PointOfSale.Payment = class {
 		const payments = doc.payments;
 		const currency = doc.currency;
 
+		// controls are rebuilt below, so any auto-fill tracking is now stale
+		this.auto_filled_modes = {};
+
 		if (!this.$payment_modes.is(":visible")) {
 			return;
 		}
@@ -480,6 +524,12 @@ erpnext.PointOfSale.Payment = class {
 					fieldtype: "Currency",
 					placeholder: __("Enter {0} amount.", [p.mode_of_payment]),
 					onchange: function () {
+						// a value the cashier typed is theirs to keep — stop treating
+						// this mode as auto-filled so a mode switch won't reclaim it
+						if (!me.applying_auto_fill && me.auto_filled_modes) {
+							delete me.auto_filled_modes[mode];
+						}
+
 						const current_value = frappe.model.get_value(p.doctype, p.name, "amount");
 						if (current_value != this.value) {
 							frappe.model
