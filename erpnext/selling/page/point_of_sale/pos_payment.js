@@ -284,15 +284,65 @@ erpnext.PointOfSale.Payment = class {
 		});
 	}
 
-	auto_set_remaining_amount() {
+	get_remaining_amount(excluded_mode) {
+		// Remaining balance the cashier still has to collect, ignoring whatever is
+		// already entered against `excluded_mode`. Payment rows are summed directly
+		// instead of using doc.paid_amount because set_value() is async — paid_amount
+		// can still be stale right after an amount is typed into another mode.
 		const doc = this.events.get_frm().doc;
 		const grand_total = cint(frappe.sys_defaults.disable_rounded_total)
 			? doc.grand_total
 			: doc.rounded_total;
-		const remaining_amount = grand_total - doc.paid_amount;
-		const current_value = this.selected_mode ? this.selected_mode.get_value() : undefined;
-		if (!current_value && remaining_amount > 0 && this.selected_mode) {
+
+		const paid_so_far = (doc.payments || []).reduce((sum, p) => {
+			const mode = this.sanitize_mode_of_payment(p.mode_of_payment);
+			if (mode === excluded_mode) return sum;
+			// prefer the control's live value; the model row may not be updated yet
+			const control = this[`${mode}_control`];
+			const amount = control ? flt(control.get_value()) : flt(p.amount);
+			return sum + amount;
+		}, 0);
+
+		return Math.max(flt(grand_total) - paid_so_far - flt(doc.loyalty_amount), 0);
+	}
+
+	auto_set_remaining_amount() {
+		if (!this.selected_mode) return;
+
+		const mode = this.$payment_modes.find(".border-primary").attr("data-mode");
+		const current_value = this.selected_mode.get_value();
+		// only untouched / zeroed modes get auto-filled — never clobber a typed amount
+		if (flt(current_value)) return;
+
+		const remaining_amount = this.get_remaining_amount(mode);
+		if (remaining_amount > 0) {
 			this.selected_mode.set_value(remaining_amount);
+		}
+	}
+
+	sync_remaining_to_untouched_modes(changed_mode) {
+		// After an amount is typed, push the new remainder into any other mode that
+		// is still at zero so both boxes always show a valid split of the total.
+		// set_value() below re-fires onchange, so guard against re-entering the sync.
+		if (this.syncing_remaining_amount) return;
+		this.syncing_remaining_amount = true;
+
+		try {
+			const doc = this.events.get_frm().doc;
+			const remaining_amount = this.get_remaining_amount(changed_mode);
+			if (remaining_amount <= 0) return;
+
+			(doc.payments || []).forEach((p) => {
+				const mode = this.sanitize_mode_of_payment(p.mode_of_payment);
+				if (mode === changed_mode) return;
+
+				const control = this[`${mode}_control`];
+				if (!control || flt(control.get_value())) return;
+
+				control.set_value(remaining_amount);
+			});
+		} finally {
+			this.syncing_remaining_amount = false;
 		}
 	}
 
@@ -434,7 +484,10 @@ erpnext.PointOfSale.Payment = class {
 						if (current_value != this.value) {
 							frappe.model
 								.set_value(p.doctype, p.name, "amount", flt(this.value))
-								.then(() => me.update_totals_section());
+								.then(() => {
+									me.update_totals_section();
+									me.sync_remaining_to_untouched_modes(mode);
+								});
 
 							const formatted_currency = format_currency(this.value, currency);
 							me.$payment_modes.find(`.${mode}-amount`).html(formatted_currency);
