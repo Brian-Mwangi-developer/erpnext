@@ -37,6 +37,7 @@ frappe.ui.form.on("POS Closing Entry", {
 		});
 
 		set_html_data(frm);
+		refresh_discrepancy_reason(frm);
 
 		if (frm.doc.docstatus == 1) {
 			if (!frm.doc.posting_date) {
@@ -163,8 +164,33 @@ frappe.ui.form.on("POS Closing Entry Detail", {
 	closing_amount: (frm, cdt, cdn) => {
 		const row = locals[cdt][cdn];
 		frappe.model.set_value(cdt, cdn, "difference", flt(row.closing_amount - row.expected_amount));
+		refresh_discrepancy_reason(frm);
 	},
 });
+
+function refresh_discrepancy_reason(frm) {
+	frappe.db.get_single_value("POS Settings", "discrepancy_tolerance_amount").then((tolerance) => {
+		tolerance = flt(tolerance) || 50;
+		const mismatched = (frm.doc.payment_reconciliation || []).filter(
+			(row) => Math.abs(flt(row.difference)) > tolerance
+		);
+
+		frm.toggle_reqd("discrepancy_reason", mismatched.length > 0);
+
+		if (mismatched.length > 0) {
+			const modes = mismatched.map((row) => row.mode_of_payment).join(", ");
+			frm.set_df_property(
+				"discrepancy_reason",
+				"description",
+				__(
+					"Counted amount differs from expected by more than {0} for: {1}. Please explain the discrepancy before closing.",
+					[format_currency(tolerance), modes]
+				)
+			);
+		}
+		frm.refresh_field("discrepancy_reason");
+	});
+}
 
 function set_form_data(data, frm) {
 	data.forEach((d) => {

@@ -4,7 +4,7 @@
 
 import frappe
 from frappe import _
-from frappe.utils import flt, get_datetime
+from frappe.utils import cstr, flt, get_datetime
 
 from erpnext.accounts.doctype.pos_invoice_merge_log.pos_invoice_merge_log import (
 	consolidate_pos_invoices,
@@ -60,6 +60,33 @@ class POSClosingEntry(StatusUpdater):
 
 		self.validate_duplicate_pos_invoices()
 		self.validate_pos_invoices()
+		self.validate_payment_discrepancy()
+
+	def validate_payment_discrepancy(self):
+		"""
+		If the counted (closing) amount for any payment mode differs from the
+		system-expected amount by more than DISCREPANCY_TOLERANCE, the cashier
+		must record a reason before the closing entry can be submitted. This
+		gives every shift a paper trail instead of silently absorbing shortfalls.
+		"""
+		tolerance = flt(
+			frappe.db.get_single_value("POS Settings", "discrepancy_tolerance_amount") or 50
+		)
+
+		mismatched_modes = [
+			d.mode_of_payment
+			for d in self.payment_reconciliation
+			if abs(flt(d.difference)) > tolerance
+		]
+
+		if mismatched_modes and not cstr(self.discrepancy_reason).strip():
+			frappe.throw(
+				_(
+					"Counted amount does not match the expected amount for {0} (difference greater than {1}). "
+					"Please enter a Reason for Discrepancy before closing."
+				).format(frappe.bold(", ".join(mismatched_modes)), frappe.utils.fmt_money(tolerance)),
+				title=_("Discrepancy Requires a Reason"),
+			)
 
 	def validate_duplicate_pos_invoices(self):
 		pos_occurences = {}

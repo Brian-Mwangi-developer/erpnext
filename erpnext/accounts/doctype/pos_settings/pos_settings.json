@@ -6,7 +6,9 @@
  "engine": "InnoDB",
  "field_order": [
   "invoice_fields",
-  "pos_search_fields"
+  "pos_search_fields",
+  "closing_section",
+  "discrepancy_tolerance_amount"
  ],
  "fields": [
   {
@@ -20,6 +22,18 @@
    "fieldtype": "Table",
    "label": "POS Search Fields",
    "options": "POS Search Fields"
+  },
+  {
+   "fieldname": "closing_section",
+   "fieldtype": "Section Break",
+   "label": "POS Closing"
+  },
+  {
+   "default": "50",
+   "description": "If a payment mode's counted amount differs from the expected amount by more than this, the cashier must enter a Reason for Discrepancy before the POS Closing Entry can be submitted.",
+   "fieldname": "discrepancy_tolerance_amount",
+   "fieldtype": "Currency",
+   "label": "Discrepancy Tolerance Amount"
   }
  ],
  "issingle": 1,

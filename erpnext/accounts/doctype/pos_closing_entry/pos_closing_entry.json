@@ -25,6 +25,7 @@
   "payment_reconciliation_details",
   "section_break_11",
   "payment_reconciliation",
+  "discrepancy_reason",
   "section_break_13",
   "grand_total",
   "net_total",
@@ -119,6 +120,12 @@
    "fieldtype": "Table",
    "label": "Payment Reconciliation",
    "options": "POS Closing Entry Detail"
+  },
+  {
+   "description": "Required when any payment mode's counted amount differs from the expected amount by more than the allowed tolerance (default KES 50).",
+   "fieldname": "discrepancy_reason",
+   "fieldtype": "Small Text",
+   "label": "Reason for Discrepancy"
   },
   {
    "collapsible": 1,
